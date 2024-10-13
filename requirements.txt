@@ -3,3 +3,4 @@ streamlit==1.10.0
 google-api-python-client==2.47.0
 yt-dlp==2022.5.18
 pydub==0.25.1
+altair==4.1.0
