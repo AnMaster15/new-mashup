@@ -18,7 +18,15 @@ from googleapiclient.discovery import build
 import yt_dlp
 from pydub import AudioSegment
 import random
-from fake_useragent import UserAgent
+
+# List of common user agents
+USER_AGENTS = [
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Safari/605.1.15',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:89.0) Gecko/20100101 Firefox/89.0',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.114 Safari/537.36',
+    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.101 Safari/537.36'
+]
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -66,8 +74,7 @@ def get_youtube_links(api_key, query, max_results=20):
         return []
 
 def get_random_user_agent():
-    ua = UserAgent()
-    return ua.random
+    return random.choice(USER_AGENTS)
 
 def download_single_audio(url, index, download_path):
     ydl_opts = {
