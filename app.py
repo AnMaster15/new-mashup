@@ -18,16 +18,20 @@ from googleapiclient.discovery import build
 import yt_dlp
 from pydub import AudioSegment
 
+# Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+# Load environment variables
 load_dotenv()
 
+# Check for required environment variables
 api_key = os.getenv('YOUTUBE_API_KEY')
 sender_email = os.getenv('SENDER_EMAIL')
 email_password = os.getenv('EMAIL_PASSWORD')
 
 if not all([api_key, sender_email, email_password]):
-    raise ValueError("Missing environment variables. Please check your .env file.")
+    st.error("Missing environment variables. Please check your .env file.")
+    st.stop()
 
 num_cores = multiprocessing.cpu_count()
 
@@ -35,6 +39,7 @@ def is_valid_email(email):
     pattern = r'^[\w\.-]+@[\w\.-]+\.\w+$'
     return re.match(pattern, email) is not None
 
+@st.cache_data
 def get_youtube_links(api_key, query, max_results=20):
     try:
         youtube = build('youtube', 'v3', developerKey=api_key)
@@ -55,6 +60,7 @@ def get_youtube_links(api_key, query, max_results=20):
         return videos
     except Exception as e:
         logging.error(f"Failed to fetch YouTube links: {e}")
+        st.error(f"Failed to fetch YouTube links: {str(e)}")
         return []
 
 def download_single_audio(url, index, download_path):
@@ -173,6 +179,7 @@ def send_email(sender_email, receiver_email, subject, body, attachment_path, pas
         return True
     except Exception as e:
         logging.error(f"Failed to send email: {e}")
+        st.error(f"Failed to send email: {str(e)}")
         return False
 
 def main():
@@ -188,44 +195,48 @@ def main():
             st.error("Please enter a valid singer name and email address.")
             return
 
-        with st.spinner("Creating mashup..."):
-            videos = get_youtube_links(api_key, singer_name, max_results=num_videos)
+        try:
+            with st.spinner("Creating mashup..."):
+                videos = get_youtube_links(api_key, singer_name, max_results=num_videos)
 
-            if not videos:
-                st.error(f"No videos found for {singer_name}. Please try a different singer name.")
-                return
+                if not videos:
+                    st.error(f"No videos found for {singer_name}. Please try a different singer name.")
+                    return
 
-            download_path = tempfile.mkdtemp()
-            video_urls = [url for _, url in videos]
-            audio_files = download_all_audio(video_urls, download_path)
+                download_path = tempfile.mkdtemp()
+                video_urls = [url for _, url in videos]
+                audio_files = download_all_audio(video_urls, download_path)
 
-            if not audio_files:
-                st.error("Failed to download audio files. Please try again.")
-                return
+                if not audio_files:
+                    st.error("Failed to download audio files. Please try again.")
+                    return
 
-            output_file = os.path.join(tempfile.gettempdir(), "mashup.mp3")
-            mashup_file = create_mashup(audio_files, output_file, trim_duration)
+                output_file = os.path.join(tempfile.gettempdir(), "mashup.mp3")
+                mashup_file = create_mashup(audio_files, output_file, trim_duration)
 
-            if not mashup_file:
-                st.error("Failed to create mashup. Please try again.")
-                return
+                if not mashup_file:
+                    st.error("Failed to create mashup. Please try again.")
+                    return
 
-            zip_file = os.path.join(tempfile.gettempdir(), "mashup.zip")
-            create_zip_file(mashup_file, zip_file)
+                zip_file = os.path.join(tempfile.gettempdir(), "mashup.zip")
+                create_zip_file(mashup_file, zip_file)
 
-            subject = f"Your {singer_name} YouTube Mashup"
-            body = f"Please find attached your custom YouTube mashup of {singer_name} songs. Duration: {trim_duration * len(audio_files)} seconds."
-            email_sent = send_email(sender_email, receiver_email, subject, body, zip_file, email_password)
+                subject = f"Your {singer_name} YouTube Mashup"
+                body = f"Please find attached your custom YouTube mashup of {singer_name} songs. Duration: {trim_duration * len(audio_files)} seconds."
+                email_sent = send_email(sender_email, receiver_email, subject, body, zip_file, email_password)
 
-            os.remove(mashup_file)
-            os.remove(zip_file)
-            for file in audio_files:
-                os.remove(file)
+                os.remove(mashup_file)
+                os.remove(zip_file)
+                for file in audio_files:
+                    os.remove(file)
 
-            if email_sent:
-                st.success("Mashup created and sent successfully! Check your email.")
-            else:
-                st.error("Mashup created but failed to send email. Please try again.")
+                if email_sent:
+                    st.success("Mashup created and sent successfully! Check your email.")
+                else:
+                    st.error("Mashup created but failed to send email. Please try again.")
+        except Exception as e:
+            logging.error(f"An error occurred: {str(e)}")
+            st.error(f"An error occurred: {str(e)}")
 
 if __name__ == '__main__':
     main()
