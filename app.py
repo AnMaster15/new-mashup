@@ -30,10 +30,11 @@ load_dotenv()
 api_key = os.getenv('YOUTUBE_API_KEY')
 sender_email = os.getenv('SENDER_EMAIL')
 email_password = os.getenv('EMAIL_PASSWORD')
-client_id = os.getenv('GOOGLE_CLIENT_ID')
-client_secret = os.getenv('GOOGLE_CLIENT_SECRET')
+GOOGLE_CLIENT_ID = os.getenv('GOOGLE_CLIENT_ID')
+GOOGLE_CLIENT_SECRET = os.getenv('GOOGLE_CLIENT_SECRET')
+REDIRECT_URI = os.getenv('REDIRECT_URI')  # Should be set to your deployed app's URL + '/callback'
 
-if not all([api_key, sender_email, email_password, client_id, client_secret]):
+if not all([api_key, sender_email, email_password, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, REDIRECT_URI]):
     st.error("Missing environment variables. Please check your .env file.")
     st.stop()
 
@@ -59,19 +60,51 @@ def get_youtube_service():
     flow = Flow.from_client_config(
         {
             "web": {
-                "client_id": client_id,
-                "client_secret": client_secret,
+                "client_id": GOOGLE_CLIENT_ID,
+                "client_secret": GOOGLE_CLIENT_SECRET,
                 "auth_uri": "https://accounts.google.com/o/oauth2/auth",
                 "token_uri": "https://oauth2.googleapis.com/token",
+                "redirect_uris": [REDIRECT_URI],
             }
         },
         scopes=['https://www.googleapis.com/auth/youtube.force-ssl']
     )
     
-    flow.run_local_server(port=8080, prompt='consent', authorization_prompt_message='')
-    credentials = flow.credentials
+    # Check if we have stored credentials
+    if 'credentials' not in st.session_state:
+        authorization_url, _ = flow.authorization_url(prompt='consent')
+        st.markdown(f"Please [click here]({authorization_url}) to authorize the application.")
+        st.stop()
     
+    credentials = Credentials(**st.session_state.credentials)
     return build('youtube', 'v3', credentials=credentials)
+
+def handle_oauth_callback():
+    flow = Flow.from_client_config(
+        {
+            "web": {
+                "client_id": GOOGLE_CLIENT_ID,
+                "client_secret": GOOGLE_CLIENT_SECRET,
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token",
+                "redirect_uris": [REDIRECT_URI],
+            }
+        },
+        scopes=['https://www.googleapis.com/auth/youtube.force-ssl'],
+        redirect_uri=REDIRECT_URI
+    )
+    
+    flow.fetch_token(code=st.experimental_get_query_params()['code'][0])
+    credentials = flow.credentials
+    st.session_state.credentials = {
+        'token': credentials.token,
+        'refresh_token': credentials.refresh_token,
+        'token_uri': credentials.token_uri,
+        'client_id': credentials.client_id,
+        'client_secret': credentials.client_secret,
+        'scopes': credentials.scopes
+    }
+    st.experimental_rerun()
 
 @st.cache_data
 def get_youtube_links(query, max_results=20):
@@ -221,6 +254,10 @@ def send_email(sender_email, receiver_email, subject, body, attachment_path, pas
         return False
 
 def main():
+    if 'code' in st.experimental_get_query_params():
+        handle_oauth_callback()
+        return
+
     st.title("YouTube Mashup Creator")
 
     singer_name = st.text_input("Enter singer name:")
