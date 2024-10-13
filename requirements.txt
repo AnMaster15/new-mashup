@@ -1,7 +1,5 @@
-streamlit
-altair==4.1.0
-pydub
-yt-dlp
-google-api-python-client
-smtplib
-python-dotenv
+streamlit==1.24.0
+python-dotenv==1.0.0
+google-api-python-client==2.89.0
+yt-dlp==2023.6.22
+pydub==0.25.1
