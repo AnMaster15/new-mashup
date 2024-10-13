@@ -17,6 +17,8 @@ import streamlit as st
 from googleapiclient.discovery import build
 import yt_dlp
 from pydub import AudioSegment
+import random
+from fake_useragent import UserAgent
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -63,6 +65,10 @@ def get_youtube_links(api_key, query, max_results=20):
         st.error(f"Failed to fetch YouTube links: {str(e)}")
         return []
 
+def get_random_user_agent():
+    ua = UserAgent()
+    return ua.random
+
 def download_single_audio(url, index, download_path):
     ydl_opts = {
         'format': 'bestaudio/best',
@@ -74,6 +80,7 @@ def download_single_audio(url, index, download_path):
         }],
         'retries': 3,
         'fragment_retries': 3,
+        'user_agent': get_random_user_agent(),
     }
 
     max_attempts = 5
@@ -92,6 +99,7 @@ def download_single_audio(url, index, download_path):
                 sleep_time = (2 ** attempt) + random.uniform(0, 1)  # Exponential backoff
                 logging.info(f"Detected anti-bot measure. Waiting for {sleep_time:.2f} seconds before retrying...")
                 time.sleep(sleep_time)
+                ydl_opts['user_agent'] = get_random_user_agent()  # Rotate user agent for each attempt
             else:
                 logging.error(f"Error downloading audio (attempt {attempt + 1}/{max_attempts}): {e}")
                 return None
@@ -102,7 +110,7 @@ def download_single_audio(url, index, download_path):
 def download_all_audio(video_urls, download_path):
     downloaded_files = []
     random.shuffle(video_urls)  # Randomize download order
-    with ThreadPoolExecutor(max_workers=2) as executor:  # Reduced from 3 to 2
+    with ThreadPoolExecutor(max_workers=1) as executor:  # Reduced to 1 worker
         futures = {
             executor.submit(download_single_audio, url, index, download_path): index
             for index, url in enumerate(video_urls, start=1)
@@ -113,7 +121,7 @@ def download_all_audio(video_urls, download_path):
                 mp3_file = future.result()
                 if mp3_file:
                     downloaded_files.append(mp3_file)
-                time.sleep(random.uniform(2, 5))  # Increased wait time between downloads
+                time.sleep(random.uniform(5, 10))  # Increased wait time between downloads
             except Exception as e:
                 logging.error(f"Error occurred: {e}")
 
