@@ -76,7 +76,7 @@ def download_single_audio(url, index, download_path):
         'fragment_retries': 3,
     }
 
-    max_attempts = 3
+    max_attempts = 5
     for attempt in range(max_attempts):
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -88,20 +88,21 @@ def download_single_audio(url, index, download_path):
                 logging.error(f"Downloaded file not found for {url}")
                 return None
         except Exception as e:
-            logging.error(f"Error downloading audio (attempt {attempt + 1}/{max_attempts}): {e}")
             if "Sign in to confirm you're not a bot" in str(e):
-                sleep_time = random.uniform(5, 10) 
+                sleep_time = (2 ** attempt) + random.uniform(0, 1)  # Exponential backoff
                 logging.info(f"Detected anti-bot measure. Waiting for {sleep_time:.2f} seconds before retrying...")
                 time.sleep(sleep_time)
             else:
-                return None 
-    
+                logging.error(f"Error downloading audio (attempt {attempt + 1}/{max_attempts}): {e}")
+                return None
+
     logging.error(f"Failed to download audio after {max_attempts} attempts: {url}")
     return None
 
 def download_all_audio(video_urls, download_path):
     downloaded_files = []
-    with ThreadPoolExecutor(max_workers=min(num_cores, 3)) as executor:  
+    random.shuffle(video_urls)  # Randomize download order
+    with ThreadPoolExecutor(max_workers=2) as executor:  # Reduced from 3 to 2
         futures = {
             executor.submit(download_single_audio, url, index, download_path): index
             for index, url in enumerate(video_urls, start=1)
@@ -112,7 +113,7 @@ def download_all_audio(video_urls, download_path):
                 mp3_file = future.result()
                 if mp3_file:
                     downloaded_files.append(mp3_file)
-                time.sleep(random.uniform(1, 3))
+                time.sleep(random.uniform(2, 5))  # Increased wait time between downloads
             except Exception as e:
                 logging.error(f"Error occurred: {e}")
 
@@ -129,7 +130,8 @@ def create_mashup(audio_files, output_file, trim_duration):
                 logging.warning(f"Audio file {file} is shorter than trim duration. Using full length.")
                 part = audio
             else:
-                part = audio[:total_trim_duration_per_file]
+                start_point = random.randint(0, len(audio) - total_trim_duration_per_file)
+                part = audio[start_point:start_point + total_trim_duration_per_file]
             mashup += part
         except Exception as e:
             logging.error(f"Error processing file {file}: {e}")
