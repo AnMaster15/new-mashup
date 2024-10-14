@@ -90,7 +90,7 @@ def handle_oauth_callback():
     state = st.experimental_get_query_params().get('state', [None])[0]
     if state != st.session_state.get('oauth_state'):
         st.error("Invalid state parameter. Please try again.")
-        st.stop()
+        return
 
     flow = Flow.from_client_config(
         {
@@ -119,6 +119,7 @@ def handle_oauth_callback():
         }
         # Clear the oauth_state
         del st.session_state.oauth_state
+        st.success("Authentication successful!")
         st.experimental_rerun()
     except Exception as e:
         if 'invalid_grant' in str(e):
@@ -127,7 +128,6 @@ def handle_oauth_callback():
             st.error("There's a mismatch in the redirect URI. Please check your configuration.")
         else:
             st.error(f"An unexpected error occurred: {str(e)}")
-        st.stop()
 
 def get_authenticated_service():
     if 'credentials' not in st.session_state:
@@ -299,11 +299,7 @@ def send_email(sender_email, receiver_email, subject, body, attachment_path, pas
         st.error(f"Failed to send email: {str(e)}")
         return False
 
-def main():
-    if 'code' in st.experimental_get_query_params():
-        handle_oauth_callback()
-        return
-
+def main_page():
     st.title("YouTube Mashup Creator")
 
     singer_name = st.text_input("Enter singer name:")
@@ -358,6 +354,35 @@ def main():
         except Exception as e:
             logging.error(f"An error occurred: {str(e)}")
             st.error(f"An error occurred: {str(e)}")
+
+def main():
+    # Check if we're handling a callback
+    if 'code' in st.experimental_get_query_params():
+        handle_oauth_callback()
+    elif 'credentials' not in st.session_state:
+        # If not authenticated, start the OAuth flow
+        flow = Flow.from_client_config(
+            {
+                "web": {
+                    "client_id": GOOGLE_CLIENT_ID,
+                    "client_secret": GOOGLE_CLIENT_SECRET,
+                    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                    "token_uri": "https://oauth2.googleapis.com/token",
+                    "redirect_uris": [REDIRECT_URI],
+                }
+            },
+            scopes=['https://www.googleapis.com/auth/youtube.force-ssl'],
+            redirect_uri=REDIRECT_URI
+        )
+        
+        # Generate and store a random state
+        state = secrets.token_urlsafe(16)
+        st.session_state.oauth_state = state
+        authorization_url, _ = flow.authorization_url(prompt='consent', state=state)
+        st.markdown(f"Please [click here]({authorization_url}) to authorize the application.")
+    else:
+        # If authenticated, show the main page
+        main_page()
 
 if __name__ == '__main__':
     main()
