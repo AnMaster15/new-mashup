@@ -344,4 +344,20 @@ def main():
 
                 subject = f"Your {singer_name} YouTube Mashup"
                 body = f"Please find attached your custom YouTube mashup of {singer_name} songs. Duration: {trim_duration * len(audio_files)} seconds."
-                email_sent = send_email(sender_email, receiver_email
+                email_sent = send_email(sender_email, receiver_email, subject, body, zip_file, email_password)
+
+                os.remove(mashup_file)
+                os.remove(zip_file)
+                for file in audio_files:
+                    os.remove(file)
+
+                if email_sent:
+                    st.success("Mashup created and sent successfully! Check your email.")
+                else:
+                    st.error("Mashup created but failed to send email. Please try again.")
+        except Exception as e:
+            logging.error(f"An error occurred: {str(e)}")
+            st.error(f"An error occurred: {str(e)}")
+
+if __name__ == '__main__':
+    main()
