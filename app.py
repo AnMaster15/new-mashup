@@ -6,6 +6,7 @@ import zipfile
 import smtplib
 import random
 import time
+import secrets
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
@@ -17,6 +18,8 @@ import streamlit as st
 from googleapiclient.discovery import build
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
+from google.auth.transport.requests import Request
+from google.auth.exceptions import RefreshError
 import yt_dlp
 from pydub import AudioSegment
 
@@ -67,13 +70,15 @@ def get_youtube_service():
                 "redirect_uris": [REDIRECT_URI],
             }
         },
-        scopes=['https://www.googleapis.com/auth/youtube.force-ssl'],  # Added comma here
+        scopes=['https://www.googleapis.com/auth/youtube.force-ssl'],
         redirect_uri=REDIRECT_URI
     )
     
-    # Check if we have stored credentials
     if 'credentials' not in st.session_state:
-        authorization_url, _ = flow.authorization_url(prompt='consent')
+        # Generate and store a random state
+        state = secrets.token_urlsafe(16)
+        st.session_state.oauth_state = state
+        authorization_url, _ = flow.authorization_url(prompt='consent', state=state)
         st.markdown(f"Please [click here]({authorization_url}) to authorize the application.")
         st.stop()
     
@@ -81,6 +86,12 @@ def get_youtube_service():
     return build('youtube', 'v3', credentials=credentials)
 
 def handle_oauth_callback():
+    # Verify the state
+    state = st.experimental_get_query_params().get('state', [None])[0]
+    if state != st.session_state.get('oauth_state'):
+        st.error("Invalid state parameter. Please try again.")
+        st.stop()
+
     flow = Flow.from_client_config(
         {
             "web": {
@@ -95,22 +106,56 @@ def handle_oauth_callback():
         redirect_uri=REDIRECT_URI
     )
     
-    flow.fetch_token(code=st.experimental_get_query_params()['code'][0])
-    credentials = flow.credentials
-    st.session_state.credentials = {
-        'token': credentials.token,
-        'refresh_token': credentials.refresh_token,
-        'token_uri': credentials.token_uri,
-        'client_id': credentials.client_id,
-        'client_secret': credentials.client_secret,
-        'scopes': credentials.scopes
-    }
-    st.experimental_rerun()
+    try:
+        flow.fetch_token(code=st.experimental_get_query_params()['code'][0])
+        credentials = flow.credentials
+        st.session_state.credentials = {
+            'token': credentials.token,
+            'refresh_token': credentials.refresh_token,
+            'token_uri': credentials.token_uri,
+            'client_id': credentials.client_id,
+            'client_secret': credentials.client_secret,
+            'scopes': credentials.scopes
+        }
+        # Clear the oauth_state
+        del st.session_state.oauth_state
+        st.experimental_rerun()
+    except Exception as e:
+        if 'invalid_grant' in str(e):
+            st.error("The authorization code has expired or is invalid. Please try authenticating again.")
+        elif 'redirect_uri_mismatch' in str(e):
+            st.error("There's a mismatch in the redirect URI. Please check your configuration.")
+        else:
+            st.error(f"An unexpected error occurred: {str(e)}")
+        st.stop()
+
+def get_authenticated_service():
+    if 'credentials' not in st.session_state:
+        return get_youtube_service()
+    
+    credentials = Credentials(**st.session_state.credentials)
+    
+    if credentials.expired:
+        try:
+            credentials.refresh(Request())
+            st.session_state.credentials = {
+                'token': credentials.token,
+                'refresh_token': credentials.refresh_token,
+                'token_uri': credentials.token_uri,
+                'client_id': credentials.client_id,
+                'client_secret': credentials.client_secret,
+                'scopes': credentials.scopes
+            }
+        except RefreshError:
+            del st.session_state.credentials
+            return get_youtube_service()
+    
+    return build('youtube', 'v3', credentials=credentials)
 
 @st.cache_data
 def get_youtube_links(query, max_results=20):
     try:
-        youtube = get_youtube_service()
+        youtube = get_authenticated_service()
         search_response = youtube.search().list(
             q=query,
             part='snippet',
@@ -299,20 +344,4 @@ def main():
 
                 subject = f"Your {singer_name} YouTube Mashup"
                 body = f"Please find attached your custom YouTube mashup of {singer_name} songs. Duration: {trim_duration * len(audio_files)} seconds."
-                email_sent = send_email(sender_email, receiver_email, subject, body, zip_file, email_password)
-
-                os.remove(mashup_file)
-                os.remove(zip_file)
-                for file in audio_files:
-                    os.remove(file)
-
-                if email_sent:
-                    st.success("Mashup created and sent successfully! Check your email.")
-                else:
-                    st.error("Mashup created but failed to send email. Please try again.")
-        except Exception as e:
-            logging.error(f"An error occurred: {str(e)}")
-            st.error(f"An error occurred: {str(e)}")
-
-if __name__ == '__main__':
-    main()
+                email_sent = send_email(sender_email, receiver_email
