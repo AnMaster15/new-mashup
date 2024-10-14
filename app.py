@@ -67,7 +67,7 @@ def get_youtube_service():
                 "redirect_uris": [REDIRECT_URI],
             }
         },
-        scopes=['https://www.googleapis.com/auth/youtube.force-ssl']
+        scopes=['https://www.googleapis.com/auth/youtube.force-ssl'],  # Added comma here
         redirect_uri=REDIRECT_URI
     )
     
