@@ -6,7 +6,6 @@ import zipfile
 import smtplib
 import random
 import time
-import secrets
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
@@ -16,10 +15,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import multiprocessing
 import streamlit as st
 from googleapiclient.discovery import build
-from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import Flow
-from google.auth.transport.requests import Request
-from google.auth.exceptions import RefreshError
 import yt_dlp
 from pydub import AudioSegment
 
@@ -33,129 +28,21 @@ load_dotenv()
 api_key = os.getenv('YOUTUBE_API_KEY')
 sender_email = os.getenv('SENDER_EMAIL')
 email_password = os.getenv('EMAIL_PASSWORD')
-GOOGLE_CLIENT_ID = os.getenv('GOOGLE_CLIENT_ID')
-GOOGLE_CLIENT_SECRET = os.getenv('GOOGLE_CLIENT_SECRET')
-REDIRECT_URI = os.getenv('REDIRECT_URI')  # Should be set to your deployed app's URL + '/callback'
 
-if not all([api_key, sender_email, email_password, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, REDIRECT_URI]):
+if not all([api_key, sender_email, email_password]):
     st.error("Missing environment variables. Please check your .env file.")
     st.stop()
 
 num_cores = multiprocessing.cpu_count()
 
-# List of common user agents
-USER_AGENTS = [
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Safari/605.1.15',
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:89.0) Gecko/20100101 Firefox/89.0',
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.114 Safari/537.36',
-    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.101 Safari/537.36'
-]
-
-def get_random_user_agent():
-    return random.choice(USER_AGENTS)
-
 def is_valid_email(email):
     pattern = r'^[\w\.-]+@[\w\.-]+\.\w+$'
     return re.match(pattern, email) is not None
 
-def get_youtube_service():
-    flow = Flow.from_client_config(
-        {
-            "web": {
-                "client_id": GOOGLE_CLIENT_ID,
-                "client_secret": GOOGLE_CLIENT_SECRET,
-                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                "token_uri": "https://oauth2.googleapis.com/token",
-                "redirect_uris": [REDIRECT_URI],
-            }
-        },
-        scopes=['https://www.googleapis.com/auth/youtube.force-ssl'],
-        redirect_uri=REDIRECT_URI
-    )
-    
-    if 'credentials' not in st.session_state:
-        # Generate and store a random state
-        state = secrets.token_urlsafe(16)
-        st.session_state.oauth_state = state
-        authorization_url, _ = flow.authorization_url(prompt='consent', state=state)
-        st.markdown(f"Please [click here]({authorization_url}) to authorize the application.")
-        st.stop()
-    
-    credentials = Credentials(**st.session_state.credentials)
-    return build('youtube', 'v3', credentials=credentials)
-
-def handle_oauth_callback():
-    # Verify the state
-    state = st.experimental_get_query_params().get('state', [None])[0]
-    if state != st.session_state.get('oauth_state'):
-        st.error("Invalid state parameter. Please try again.")
-        return
-
-    flow = Flow.from_client_config(
-        {
-            "web": {
-                "client_id": GOOGLE_CLIENT_ID,
-                "client_secret": GOOGLE_CLIENT_SECRET,
-                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                "token_uri": "https://oauth2.googleapis.com/token",
-                "redirect_uris": [REDIRECT_URI],
-            }
-        },
-        scopes=['https://www.googleapis.com/auth/youtube.force-ssl'],
-        redirect_uri=REDIRECT_URI
-    )
-    
-    try:
-        flow.fetch_token(code=st.experimental_get_query_params()['code'][0])
-        credentials = flow.credentials
-        st.session_state.credentials = {
-            'token': credentials.token,
-            'refresh_token': credentials.refresh_token,
-            'token_uri': credentials.token_uri,
-            'client_id': credentials.client_id,
-            'client_secret': credentials.client_secret,
-            'scopes': credentials.scopes
-        }
-        # Clear the oauth_state
-        del st.session_state.oauth_state
-        st.success("Authentication successful!")
-        st.experimental_rerun()
-    except Exception as e:
-        if 'invalid_grant' in str(e):
-            st.error("The authorization code has expired or is invalid. Please try authenticating again.")
-        elif 'redirect_uri_mismatch' in str(e):
-            st.error("There's a mismatch in the redirect URI. Please check your configuration.")
-        else:
-            st.error(f"An unexpected error occurred: {str(e)}")
-
-def get_authenticated_service():
-    if 'credentials' not in st.session_state:
-        return get_youtube_service()
-    
-    credentials = Credentials(**st.session_state.credentials)
-    
-    if credentials.expired:
-        try:
-            credentials.refresh(Request())
-            st.session_state.credentials = {
-                'token': credentials.token,
-                'refresh_token': credentials.refresh_token,
-                'token_uri': credentials.token_uri,
-                'client_id': credentials.client_id,
-                'client_secret': credentials.client_secret,
-                'scopes': credentials.scopes
-            }
-        except RefreshError:
-            del st.session_state.credentials
-            return get_youtube_service()
-    
-    return build('youtube', 'v3', credentials=credentials)
-
 @st.cache_data
-def get_youtube_links(query, max_results=20):
+def get_youtube_links(api_key, query, max_results=20):
     try:
-        youtube = get_authenticated_service()
+        youtube = build('youtube', 'v3', developerKey=api_key)
         search_response = youtube.search().list(
             q=query,
             part='snippet',
@@ -187,10 +74,10 @@ def download_single_audio(url, index, download_path):
         }],
         'retries': 3,
         'fragment_retries': 3,
-        'user_agent': get_random_user_agent(),
     }
 
     max_attempts = 5
+    base_delay = 5
     for attempt in range(max_attempts):
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -202,22 +89,21 @@ def download_single_audio(url, index, download_path):
                 logging.error(f"Downloaded file not found for {url}")
                 return None
         except Exception as e:
+            logging.error(f"Error downloading audio (attempt {attempt + 1}/{max_attempts}): {e}")
             if "Sign in to confirm you're not a bot" in str(e):
-                sleep_time = (2 ** attempt) + random.uniform(0, 1)  # Exponential backoff
-                logging.info(f"Detected anti-bot measure. Waiting for {sleep_time:.2f} seconds before retrying...")
-                time.sleep(sleep_time)
-                ydl_opts['user_agent'] = get_random_user_agent()  # Rotate user agent for each attempt
+                delay = base_delay * (2 ** attempt) + random.uniform(0, 1)
+                logging.info(f"Detected anti-bot measure. Waiting for {delay:.2f} seconds before retrying...")
+                time.sleep(delay)
             else:
-                logging.error(f"Error downloading audio (attempt {attempt + 1}/{max_attempts}): {e}")
-                return None
-
+                return None 
+    
     logging.error(f"Failed to download audio after {max_attempts} attempts: {url}")
     return None
 
 def download_all_audio(video_urls, download_path):
     downloaded_files = []
-    random.shuffle(video_urls)  # Randomize download order
-    with ThreadPoolExecutor(max_workers=1) as executor:  # Reduced to 1 worker
+    max_workers = min(num_cores, 2)  # Reduced concurrent downloads
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {
             executor.submit(download_single_audio, url, index, download_path): index
             for index, url in enumerate(video_urls, start=1)
@@ -228,11 +114,12 @@ def download_all_audio(video_urls, download_path):
                 mp3_file = future.result()
                 if mp3_file:
                     downloaded_files.append(mp3_file)
-                time.sleep(random.uniform(5, 10))  # Increased wait time between downloads
+                time.sleep(random.uniform(3, 7))  # Increased delay between downloads
             except Exception as e:
                 logging.error(f"Error occurred: {e}")
 
     return downloaded_files
+
 
 def create_mashup(audio_files, output_file, trim_duration):
     mashup = AudioSegment.silent(duration=0)
@@ -245,8 +132,7 @@ def create_mashup(audio_files, output_file, trim_duration):
                 logging.warning(f"Audio file {file} is shorter than trim duration. Using full length.")
                 part = audio
             else:
-                start_point = random.randint(0, len(audio) - total_trim_duration_per_file)
-                part = audio[start_point:start_point + total_trim_duration_per_file]
+                part = audio[:total_trim_duration_per_file]
             mashup += part
         except Exception as e:
             logging.error(f"Error processing file {file}: {e}")
@@ -299,7 +185,7 @@ def send_email(sender_email, receiver_email, subject, body, attachment_path, pas
         st.error(f"Failed to send email: {str(e)}")
         return False
 
-def main_page():
+def main():
     st.title("YouTube Mashup Creator")
 
     singer_name = st.text_input("Enter singer name:")
@@ -314,7 +200,7 @@ def main_page():
 
         try:
             with st.spinner("Creating mashup..."):
-                videos = get_youtube_links(singer_name, max_results=num_videos)
+                videos = get_youtube_links(api_key, singer_name, max_results=num_videos)
 
                 if not videos:
                     st.error(f"No videos found for {singer_name}. Please try a different singer name.")
@@ -354,35 +240,6 @@ def main_page():
         except Exception as e:
             logging.error(f"An error occurred: {str(e)}")
             st.error(f"An error occurred: {str(e)}")
-
-def main():
-    # Check if we're handling a callback
-    if 'code' in st.experimental_get_query_params():
-        handle_oauth_callback()
-    elif 'credentials' not in st.session_state:
-        # If not authenticated, start the OAuth flow
-        flow = Flow.from_client_config(
-            {
-                "web": {
-                    "client_id": GOOGLE_CLIENT_ID,
-                    "client_secret": GOOGLE_CLIENT_SECRET,
-                    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                    "token_uri": "https://oauth2.googleapis.com/token",
-                    "redirect_uris": [REDIRECT_URI],
-                }
-            },
-            scopes=['https://www.googleapis.com/auth/youtube.force-ssl'],
-            redirect_uri=REDIRECT_URI
-        )
-        
-        # Generate and store a random state
-        state = secrets.token_urlsafe(16)
-        st.session_state.oauth_state = state
-        authorization_url, _ = flow.authorization_url(prompt='consent', state=state)
-        st.markdown(f"Please [click here]({authorization_url}) to authorize the application.")
-    else:
-        # If authenticated, show the main page
-        main_page()
 
 if __name__ == '__main__':
     main()
